@@ -14,6 +14,11 @@ import (
 // - args from parent nodes
 // - cache?.. recursion?..
 
+type Ride struct {
+	Id   int
+	Driver Driver
+}
+
 type Driver struct {
 	Id   int
 	Name string
@@ -27,22 +32,39 @@ var DriverType = graphql.NewObject(graphql.ObjectConfig{
 	},
 })
 
+var RideType = graphql.NewObject(graphql.ObjectConfig{
+	Name: "Ride",
+	Fields: graphql.Fields{
+		"id":   &graphql.Field{Type: graphql.Int},
+		"driver": &graphql.Field{
+			Type: DriverType,
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+				fmt.Printf("driver resolver source: %+v\n", p.Source)
+				return Driver{10, "Ten"}, nil
+			},
+		},
+	},
+})
+
 func main() {
 	fields := graphql.Fields{
 		"lastRide": &graphql.Field{
-			Type: DriverType,
+			Type: RideType,
 			Args: graphql.FieldConfigArgument{
-				"x": &graphql.ArgumentConfig{
+				"id": &graphql.ArgumentConfig{
 					Type: graphql.Int,
 				},
 			},
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				fmt.Printf("Handler params: %+v\n", p.Args)
-				return Driver{1, "Me"}, nil
+				fmt.Printf("lastRide resolver params: %+v\n", p.Args)
+				return Ride{1, Driver{100, ""}}, nil
 			},
 		},
 	}
-	rootQuery := graphql.ObjectConfig{Name: "RootQuery", Fields: fields}
+	rootQuery := graphql.ObjectConfig{
+		Name: "RootQuery",
+		Fields: fields,
+	}
 
 	var schema, err = graphql.NewSchema(graphql.SchemaConfig{
 		Query: graphql.NewObject(rootQuery),
