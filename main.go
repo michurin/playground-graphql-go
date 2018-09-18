@@ -9,30 +9,50 @@ import (
 )
 
 // TODO:
-// - custom types
-// - arguments
+// + custom types
+// + arguments
+// - args from parent nodes
 // - cache?.. recursion?..
 
-var queryType = graphql.NewObject(graphql.ObjectConfig{
-	Name: "Query",
+type Driver struct {
+	Id   int
+	Name string
+}
+
+var DriverType = graphql.NewObject(graphql.ObjectConfig{
+	Name: "Driver",
 	Fields: graphql.Fields{
-		"lastRide": &graphql.Field{
-			Type: graphql.Int,
-			Resolve: func(args graphql.ResolveParams) (interface{}, error) {
-				fmt.Printf("Handler args: %#v\n", args)
-				return 1, nil
-			},
-		},
+		"id":   &graphql.Field{Type: graphql.Int},
+		"name": &graphql.Field{Type: graphql.String},
 	},
 })
 
-var Schema, _ = graphql.NewSchema(graphql.SchemaConfig{
-	Query: queryType,
-})
-
 func main() {
+	fields := graphql.Fields{
+		"lastRide": &graphql.Field{
+			Type: DriverType,
+			Args: graphql.FieldConfigArgument{
+				"x": &graphql.ArgumentConfig{
+					Type: graphql.Int,
+				},
+			},
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+				fmt.Printf("Handler params: %+v\n", p.Args)
+				return Driver{1, "Me"}, nil
+			},
+		},
+	}
+	rootQuery := graphql.ObjectConfig{Name: "RootQuery", Fields: fields}
+
+	var schema, err = graphql.NewSchema(graphql.SchemaConfig{
+		Query: graphql.NewObject(rootQuery),
+	})
+	if err != nil {
+		panic(err)
+	}
+
 	handler := gqlhandler.New(&gqlhandler.Config{
-		Schema: &Schema,
+		Schema: &schema,
 		Pretty: true,
 	})
 	http.Handle("/gql", handler)
