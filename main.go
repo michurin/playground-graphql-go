@@ -1,12 +1,13 @@
 package main
 
 import (
-	"fmt"
-	"github.com/graphql-go/graphql"
-	"github.com/mxk/go-sqlite/sqlite3"
-	gqlhandler "github.com/graphql-go/graphql-go-handler"
-	"net/http"
 	"errors"
+	"fmt"
+	"net/http"
+
+	"github.com/graphql-go/graphql"
+	gqlhandler "github.com/graphql-go/graphql-go-handler"
+	"github.com/mxk/go-sqlite/sqlite3"
 )
 
 // TODO:
@@ -19,6 +20,7 @@ import (
 // ----- draft sql interface -----
 
 func sql(sql string) []sqlite3.RowMap {
+	// fmt.Println(sql)
 	var result []sqlite3.RowMap
 	c, err := sqlite3.Open("database.db")
 	if err != nil {
@@ -46,15 +48,15 @@ func sql(sql string) []sqlite3.RowMap {
 var DriverType = graphql.NewObject(graphql.ObjectConfig{
 	Name: "driver",
 	Fields: graphql.Fields{
-		"id":   &graphql.Field{
+		"id": &graphql.Field{
 			Type: graphql.Int,
-			Resolve: func (p graphql.ResolveParams) (interface{}, error) {
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				return p.Source.(sqlite3.RowMap)["driver_id"], nil
 			},
 		},
 		"name": &graphql.Field{
 			Type: graphql.String,
-			Resolve: func (p graphql.ResolveParams) (interface{}, error) {
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				return p.Source.(sqlite3.RowMap)["name"], nil
 			},
 		},
@@ -82,9 +84,9 @@ var CustomerType = graphql.NewObject(graphql.ObjectConfig{
 var RideType = graphql.NewObject(graphql.ObjectConfig{
 	Name: "ride",
 	Fields: graphql.Fields{
-		"id":   &graphql.Field{
+		"id": &graphql.Field{
 			Type: graphql.Int,
-			Resolve: func (p graphql.ResolveParams) (interface{}, error) {
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				return p.Source.(sqlite3.RowMap)["ride_id"], nil
 			},
 		},
@@ -93,7 +95,7 @@ var RideType = graphql.NewObject(graphql.ObjectConfig{
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				driverId := p.Source.(sqlite3.RowMap)["driver_id"]
 				fmt.Println("Call for driver", driverId)
-				res :=  sql(fmt.Sprintf("select * from Driver where driver_id=%d", driverId))
+				res := sql(fmt.Sprintf("select * from Driver where driver_id=%d", driverId))
 				if len(res) == 0 {
 					return nil, nil
 				}
@@ -107,7 +109,7 @@ var RideType = graphql.NewObject(graphql.ObjectConfig{
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				customerId := p.Source.(sqlite3.RowMap)["customer_id"]
 				fmt.Println("Call for customer", customerId)
-				res :=  sql(fmt.Sprintf("select * from Customer where customer_id=%d", customerId))
+				res := sql(fmt.Sprintf("select * from Customer where customer_id=%d", customerId))
 				if len(res) == 0 {
 					return nil, nil
 				}
@@ -116,12 +118,43 @@ var RideType = graphql.NewObject(graphql.ObjectConfig{
 		},
 		"destination": &graphql.Field{
 			Type: graphql.String,
-			Resolve: func (p graphql.ResolveParams) (interface{}, error) {
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				return p.Source.(sqlite3.RowMap)["destination"], nil
 			},
 		},
 	},
 })
+
+func init() {
+	CustomerType.AddFieldConfig(
+		"rides",
+		&graphql.Field{ // synthetic field
+			Type: graphql.NewList(RideType),
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+				customerId := p.Source.(sqlite3.RowMap)["customer_id"]
+				res := sql(fmt.Sprintf("select * from Ride where customer_id=%d", customerId))
+				if len(res) == 0 {
+					return nil, nil
+				}
+				return res, nil
+			},
+		},
+	)
+	DriverType.AddFieldConfig(
+		"rides",
+		&graphql.Field{ // synthetic field
+			Type: graphql.NewList(RideType),
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+				driverId := p.Source.(sqlite3.RowMap)["driver_id"]
+				res := sql(fmt.Sprintf("select * from Ride where driver_id=%d", driverId))
+				if len(res) == 0 {
+					return nil, nil
+				}
+				return res, nil
+			},
+		},
+	)
+}
 
 // ----- m.a.i.n -----
 
@@ -136,18 +169,17 @@ func main() {
 				},
 			},
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				rideId := p.Args["id"] // TODO: or from context?!
+				rideId := p.Args["id"]
 				if rideId == nil {
 					return nil, errors.New("id arg required")
 				}
-				res :=  sql(fmt.Sprintf("select * from Ride where ride_id=%d", rideId))
+				res := sql(fmt.Sprintf("select * from Ride where ride_id=%d", rideId))
 				if len(res) == 0 {
 					return nil, nil
 				}
 				return res[0], nil
 			},
 		},
-		/*
 		"x_customer": &graphql.Field{
 			Type: CustomerType,
 			Args: graphql.FieldConfigArgument{
@@ -157,19 +189,21 @@ func main() {
 			},
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				customerId := p.Args["id"] // TODO: or from context?!
-				res :=  sql(fmt.Sprintf("select * from Customer where customer_id=%d", customerId))
+				if customerId == nil {
+					return nil, errors.New("id arg required")
+				}
+				res := sql(fmt.Sprintf("select * from Customer where customer_id=%d", customerId))
 				fmt.Printf("customer resolver params: %+v\n", p.Args)
 				fmt.Printf("%+v\n", res)
 				if len(res) == 0 {
 					return nil, nil
 				}
-				return Customer{int(res[0]["customer_id"].(int64)), res[0]["name"].(string)}, nil
+				return res[0], nil
 			},
 		},
-		*/
 	}
 	rootQuery := graphql.ObjectConfig{
-		Name: "RootQuery",
+		Name:   "RootQuery",
 		Fields: fields,
 	}
 
@@ -188,6 +222,10 @@ func main() {
 		Pretty: true,
 	})
 	http.Handle("/gql", handler)
+	fmt.Println("Examples:")
 	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_ride(id:2) {id destination customer {id name} driver {id name}} }'")
+	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_customer(id: 200) {id name, rides {id, destination, driver {name}}} }'")
+	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_ride(id: 3) {id destination customer {id name rides {id driver {name}}}} }'")
+	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_ride(id: 3) {id destination customer {id name rides {id driver {name rides {id}}}}} }")
 	http.ListenAndServe(":8080", nil)
 }
