@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/graph-gophers/dataloader" // HOWTO: (1) update Context, (2) force headers?
+	"github.com/graph-gophers/dataloader"
 	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/handler"
 	"github.com/mxk/go-sqlite/sqlite3"
@@ -22,7 +22,7 @@ import (
 // + handle start of request and fill context
 // + use dataloader
 // + LoadMany and rides-by-driver like requests using dataLoader
-// - handler wrapper to force context and headers
+// + handler wrapper to force context and headers
 
 // ----- draft sql interface -----
 
@@ -50,11 +50,25 @@ func sql(sql string) []sqlite3.RowMap {
 	return result
 }
 
+// ----- http -----
+
+type gtHandler struct {
+	origHandler http.Handler
+}
+
+func (h *gtHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("X-Michurin", "Here!")
+	h.origHandler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), "dataloaders", NewLoaders())))
+}
+
+func handlerWrapper(h http.Handler) *gtHandler {
+	return &gtHandler{h}
+}
+
 // ----- util -----
 
 func getLoaderFnByName(p graphql.ResolveParams, name string, key dataloader.Key) func() (interface{}, error) {
-	// TODO use Context inst RootValue?
-	return p.Info.RootValue.(map[string]interface{})["dataloaders"].(map[string]*dataloader.Loader)[name].Load(p.Context, key)
+	return p.Context.Value("dataloaders").(map[string]*dataloader.Loader)[name].Load(p.Context, key)
 }
 
 func loaderFn(p graphql.ResolveParams, key dataloader.Key) func() (interface{}, error) {
@@ -174,6 +188,7 @@ func init() {
 
 func NewLoaders() map[string](*dataloader.Loader) {
 	// we can do here all per-request stuff
+	fmt.Println("Loaders created")
 	return map[string]*dataloader.Loader{
 		"driver": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
 			var results []*dataloader.Result
@@ -321,13 +336,10 @@ func main() {
 
 	//fmt.Printf("%#v\n", schema.TypeMap())
 
-	handler := handler.New(&handler.Config{
+	handler := handlerWrapper(handler.New(&handler.Config{
 		Schema: &schema,
 		Pretty: true,
-		RootObjectFn: func(ctx context.Context, r *http.Request) map[string]interface{} { // POC init req
-			return map[string]interface{}{"dataloaders": NewLoaders()}
-		},
-	})
+	}))
 	http.Handle("/gql", handler)
 
 	fmt.Println("Examples:")
