@@ -218,7 +218,7 @@ func NewLoaders() map[string](*dataloader.Loader) {
 			res := sql(fmt.Sprintf("select * from Customer where customer_id in (%s)", strings.Join(keysString, ", "))) // Oh. Invalid request if empty list
 			data := map[int]sqlite3.RowMap{}
 			for _, e := range res {
-				data[int(e["driver_id"].(int64))] = e
+				data[int(e["customer_id"].(int64))] = e
 			}
 			for _, e := range keys {
 				r := e.String() // TODO use e.Raw().cast
