@@ -21,7 +21,7 @@ import (
 // + cache?.. recursion?..
 // + handle start of request and fill context
 // + use dataloader
-// - LoadMany and rides-by-driver like requests using dataLoader
+// + LoadMany and rides-by-driver like requests using dataLoader
 // - handler wrapper to force context and headers
 
 // ----- draft sql interface -----
@@ -52,12 +52,13 @@ func sql(sql string) []sqlite3.RowMap {
 
 // ----- util -----
 
-func loaderFn(p graphql.ResolveParams, key dataloader.Key) (func () (interface{}, error)) {
+func getLoaderFnByName(p graphql.ResolveParams, name string, key dataloader.Key) func() (interface{}, error) {
 	// TODO use Context inst RootValue?
-	return p.Info.RootValue.(map[string]interface{})["dataloaders"].(map[string]*dataloader.Loader)[p.Info.FieldName].Load(
-		p.Context,
-		key,
-	)
+	return p.Info.RootValue.(map[string]interface{})["dataloaders"].(map[string]*dataloader.Loader)[name].Load(p.Context, key)
+}
+
+func loaderFn(p graphql.ResolveParams, key dataloader.Key) func() (interface{}, error) {
+	return getLoaderFnByName(p, p.Info.FieldName, key)
 }
 
 // ----- types -----
@@ -76,14 +77,14 @@ var DriverType = graphql.NewObject(graphql.ObjectConfig{
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				return p.Source.(sqlite3.RowMap)["name"], nil
 				/*
-				// The same
-				name := p.Source.(sqlite3.RowMap)["name"]
-				fmt.Printf("INFO: %#v\n", p.Info.RootValue)
-				fmt.Println("[FR] Prepare function-result for", name)
-				return func() (interface{}, error) {
-					fmt.Println("[FR] Call function-result for", name)
-					return name, nil
-				}, nil
+					// The same
+					name := p.Source.(sqlite3.RowMap)["name"]
+					fmt.Printf("INFO: %#v\n", p.Info.RootValue)
+					fmt.Println("[FR] Prepare function-result for", name)
+					return func() (interface{}, error) {
+						fmt.Println("[FR] Call function-result for", name)
+						return name, nil
+					}, nil
 				*/
 			},
 		},
@@ -147,11 +148,10 @@ func init() {
 			Type: graphql.NewList(RideType),
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				customerId := p.Source.(sqlite3.RowMap)["customer_id"]
-				res := sql(fmt.Sprintf("select * from Ride where customer_id=%d", customerId))
-				if len(res) == 0 {
-					return nil, nil
-				}
-				return res, nil
+				fn := getLoaderFnByName(p, "rides_by_customer_id",
+					dataloader.StringKey(fmt.Sprintf("%d", customerId)),
+				)
+				return fn, nil
 			},
 		},
 	)
@@ -161,11 +161,10 @@ func init() {
 			Type: graphql.NewList(RideType),
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				driverId := p.Source.(sqlite3.RowMap)["driver_id"]
-				res := sql(fmt.Sprintf("select * from Ride where driver_id=%d", driverId))
-				if len(res) == 0 {
-					return nil, nil
-				}
-				return res, nil
+				fn := getLoaderFnByName(p, "rides_by_driver_id",
+					dataloader.StringKey(fmt.Sprintf("%d", driverId)),
+				)
+				return fn, nil
 			},
 		},
 	)
@@ -173,7 +172,7 @@ func init() {
 
 // ----- loaders -----
 
-func NewLoaders () map[string](*dataloader.Loader) {
+func NewLoaders() map[string](*dataloader.Loader) {
 	// we can do here all per-request stuff
 	return map[string]*dataloader.Loader{
 		"driver": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
@@ -205,6 +204,52 @@ func NewLoaders () map[string](*dataloader.Loader) {
 			data := map[int]sqlite3.RowMap{}
 			for _, e := range res {
 				data[int(e["driver_id"].(int64))] = e
+			}
+			for _, e := range keys {
+				r := e.String() // TODO use e.Raw().cast
+				i, _ := strconv.Atoi(r)
+				d := data[i]
+				results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
+			}
+			return results
+		}),
+		"rides_by_customer_id": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
+			var results []*dataloader.Result
+			keysString := make([]string, len(keys))
+			for idx, e := range keys {
+				keysString[idx] = e.String()
+			}
+			res := sql(fmt.Sprintf("select * from Ride where customer_id in (%s)", strings.Join(keysString, ", "))) // Oh. Invalid request if empty list
+			if len(res) == 0 {
+				return nil
+			}
+			data := map[int][]sqlite3.RowMap{}
+			for _, e := range res {
+				i := int(e["customer_id"].(int64))
+				data[i] = append(data[i], e)
+			}
+			for _, e := range keys {
+				r := e.String() // TODO use e.Raw().cast
+				i, _ := strconv.Atoi(r)
+				d := data[i]
+				results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
+			}
+			return results
+		}),
+		"rides_by_driver_id": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
+			var results []*dataloader.Result
+			keysString := make([]string, len(keys))
+			for idx, e := range keys {
+				keysString[idx] = e.String()
+			}
+			res := sql(fmt.Sprintf("select * from Ride where driver_id in (%s)", strings.Join(keysString, ", "))) // Oh. Invalid request if empty list
+			if len(res) == 0 {
+				return nil
+			}
+			data := map[int][]sqlite3.RowMap{}
+			for _, e := range res {
+				i := int(e["driver_id"].(int64))
+				data[i] = append(data[i], e)
 			}
 			for _, e := range keys {
 				r := e.String() // TODO use e.Raw().cast
