@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/graphql-go/graphql"
-	gqlhandler "github.com/graphql-go/graphql-go-handler"
+	"github.com/graphql-go/handler"
 	"github.com/mxk/go-sqlite/sqlite3"
 )
 
@@ -15,7 +15,8 @@ import (
 // + arguments
 // + args from parent nodes (use .source inst)
 // + cache?.. recursion?..
-// - make shared DB adapter
+// - handle start of request and fill context
+// - use dataloader
 
 // ----- draft sql interface -----
 
@@ -217,7 +218,7 @@ func main() {
 
 	//fmt.Printf("%#v\n", schema.TypeMap())
 
-	handler := gqlhandler.New(&gqlhandler.Config{
+	handler := handler.New(&handler.Config{
 		Schema: &schema,
 		Pretty: true,
 	})
