@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 
+	"github.com/graph-gophers/dataloader"
 	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/handler"
 	"github.com/mxk/go-sqlite/sqlite3"
@@ -47,7 +51,7 @@ func sql(sql string) []sqlite3.RowMap {
 // ----- types -----
 
 var DriverType = graphql.NewObject(graphql.ObjectConfig{
-	Name: "driver",
+	Name: "driver", // used by graphlql-relay
 	Fields: graphql.Fields{
 		"id": &graphql.Field{
 			Type: graphql.Int,
@@ -59,6 +63,16 @@ var DriverType = graphql.NewObject(graphql.ObjectConfig{
 			Type: graphql.String,
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				return p.Source.(sqlite3.RowMap)["name"], nil
+				/*
+				// The same
+				name := p.Source.(sqlite3.RowMap)["name"]
+				fmt.Printf("INFO: %#v\n", p.Info.RootValue)
+				fmt.Println("[FR] Prepare function-result for", name)
+				return func() (interface{}, error) {
+					fmt.Println("[FR] Call function-result for", name)
+					return name, nil
+				}, nil
+				*/
 			},
 		},
 	},
@@ -82,6 +96,31 @@ var CustomerType = graphql.NewObject(graphql.ObjectConfig{
 	},
 })
 
+// TODO HAVE NOT TO BE GLOBAL
+// TODO Put it into context
+var driverLoader = dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
+	var results []*dataloader.Result
+	keysString := make([]string, len(keys))
+	for idx, e := range keys {
+		keysString[idx] = e.String()
+	}
+	fmt.Println("LOADER KEYS:", strings.Join(keysString, ", "))
+	res := sql(fmt.Sprintf("select * from Driver where driver_id in (%s)", strings.Join(keysString, ", "))) // Oh. Invalid request if empty list
+	data := map[int]sqlite3.RowMap{}
+	for _, e := range res {
+		data[int(e["driver_id"].(int64))] = e
+	}
+	for _, e := range keys {
+		r := e.String() // TODO use e.Raw().cast
+		i, _ := strconv.Atoi(r)
+		d := data[i]
+		fmt.Printf("ONE RES: %#v\n", d)
+		results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
+	}
+	fmt.Printf("RES: %#v\n", results)
+	return results
+})
+
 var RideType = graphql.NewObject(graphql.ObjectConfig{
 	Name: "ride",
 	Fields: graphql.Fields{
@@ -96,13 +135,23 @@ var RideType = graphql.NewObject(graphql.ObjectConfig{
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				driverId := p.Source.(sqlite3.RowMap)["driver_id"]
 				fmt.Println("Call for driver", driverId)
-				res := sql(fmt.Sprintf("select * from Driver where driver_id=%d", driverId))
-				if len(res) == 0 {
-					return nil, nil
-				}
+
+				fn := driverLoader.Load(
+					p.Context,
+					dataloader.StringKey(fmt.Sprintf("%d", driverId)), // TODO IntKey
+				)
+				return func() (interface{}, error) { // cast on drugs :-(
+					r, e := fn()
+					return r, e
+				}, nil
+				//res := sql(fmt.Sprintf("select * from Driver where driver_id=%d", driverId))
+				//if len(res) == 0 {
+				//	return nil, nil
+				//}
 				// We return sqlite3.RowMap asis
 				// GrQL engine pass this result asis to Type resolver
-				return res[0], nil
+				//return res[0], nil // OK
+				//return func () (interface{}, error) {return res[0], nil}, nil // OK too
 			},
 		},
 		"customer": &graphql.Field{
@@ -189,7 +238,7 @@ func main() {
 				},
 			},
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				customerId := p.Args["id"] // TODO: or from context?!
+				customerId := p.Args["id"]
 				if customerId == nil {
 					return nil, errors.New("id arg required")
 				}
@@ -210,7 +259,7 @@ func main() {
 
 	var schema, err = graphql.NewSchema(graphql.SchemaConfig{
 		Query: graphql.NewObject(rootQuery),
-		//Types: []graphql.Type{CustomerType}, // ??
+		// Types: []graphql.Type{CustomerType}, // ??
 	})
 	if err != nil {
 		panic(err)
@@ -221,6 +270,9 @@ func main() {
 	handler := handler.New(&handler.Config{
 		Schema: &schema,
 		Pretty: true,
+		RootObjectFn: func(ctx context.Context, r *http.Request) map[string]interface{} { // POC init req
+			return map[string]interface{}{"dataloaders": "OK"}
+		},
 	})
 	http.Handle("/gql", handler)
 
@@ -229,6 +281,7 @@ func main() {
 	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_customer(id: 200) {id name, rides {id, destination, driver {name}}} }'")
 	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_ride(id: 3) {id destination customer {id name rides {id driver {name}}}} }'")
 	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_ride(id: 3) {id destination customer {id name rides {id driver {name rides {id}}}}} }")
+	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_customer(id: 200) {rides{ driver{rides{ driver{rides{ driver{name} }} }} }} }'")
 
 	http.ListenAndServe(":8080", nil)
 }
