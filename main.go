@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/graph-gophers/dataloader"
+	"github.com/graph-gophers/dataloader" // HOWTO: (1) update Context, (2) force headers?
 	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/handler"
 	"github.com/mxk/go-sqlite/sqlite3"
@@ -19,8 +19,10 @@ import (
 // + arguments
 // + args from parent nodes (use .source inst)
 // + cache?.. recursion?..
-// - handle start of request and fill context
-// - use dataloader
+// + handle start of request and fill context
+// + use dataloader
+// - LoadMany and rides-by-driver like requests using dataLoader
+// - handler wrapper to force context and headers
 
 // ----- draft sql interface -----
 
@@ -46,6 +48,16 @@ func sql(sql string) []sqlite3.RowMap {
 	}
 	fmt.Printf("SQL: %s -> %v\n", sql, result)
 	return result
+}
+
+// ----- util -----
+
+func loaderFn(p graphql.ResolveParams, key dataloader.Key) (func () (interface{}, error)) {
+	// TODO use Context inst RootValue?
+	return p.Info.RootValue.(map[string]interface{})["dataloaders"].(map[string]*dataloader.Loader)[p.Info.FieldName].Load(
+		p.Context,
+		key,
+	)
 }
 
 // ----- types -----
@@ -96,31 +108,6 @@ var CustomerType = graphql.NewObject(graphql.ObjectConfig{
 	},
 })
 
-// TODO HAVE NOT TO BE GLOBAL
-// TODO Put it into context
-var driverLoader = dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
-	var results []*dataloader.Result
-	keysString := make([]string, len(keys))
-	for idx, e := range keys {
-		keysString[idx] = e.String()
-	}
-	fmt.Println("LOADER KEYS:", strings.Join(keysString, ", "))
-	res := sql(fmt.Sprintf("select * from Driver where driver_id in (%s)", strings.Join(keysString, ", "))) // Oh. Invalid request if empty list
-	data := map[int]sqlite3.RowMap{}
-	for _, e := range res {
-		data[int(e["driver_id"].(int64))] = e
-	}
-	for _, e := range keys {
-		r := e.String() // TODO use e.Raw().cast
-		i, _ := strconv.Atoi(r)
-		d := data[i]
-		fmt.Printf("ONE RES: %#v\n", d)
-		results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
-	}
-	fmt.Printf("RES: %#v\n", results)
-	return results
-})
-
 var RideType = graphql.NewObject(graphql.ObjectConfig{
 	Name: "ride",
 	Fields: graphql.Fields{
@@ -134,36 +121,14 @@ var RideType = graphql.NewObject(graphql.ObjectConfig{
 			Type: DriverType,
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				driverId := p.Source.(sqlite3.RowMap)["driver_id"]
-				fmt.Println("Call for driver", driverId)
-
-				fn := driverLoader.Load(
-					p.Context,
-					dataloader.StringKey(fmt.Sprintf("%d", driverId)), // TODO IntKey
-				)
-				return func() (interface{}, error) { // cast on drugs :-(
-					r, e := fn()
-					return r, e
-				}, nil
-				//res := sql(fmt.Sprintf("select * from Driver where driver_id=%d", driverId))
-				//if len(res) == 0 {
-				//	return nil, nil
-				//}
-				// We return sqlite3.RowMap asis
-				// GrQL engine pass this result asis to Type resolver
-				//return res[0], nil // OK
-				//return func () (interface{}, error) {return res[0], nil}, nil // OK too
+				return loaderFn(p, dataloader.StringKey(fmt.Sprintf("%d", driverId))), nil
 			},
 		},
 		"customer": &graphql.Field{
 			Type: CustomerType,
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				customerId := p.Source.(sqlite3.RowMap)["customer_id"]
-				fmt.Println("Call for customer", customerId)
-				res := sql(fmt.Sprintf("select * from Customer where customer_id=%d", customerId))
-				if len(res) == 0 {
-					return nil, nil
-				}
-				return res[0], nil
+				return loaderFn(p, dataloader.StringKey(fmt.Sprintf("%d", customerId))), nil
 			},
 		},
 		"destination": &graphql.Field{
@@ -206,6 +171,52 @@ func init() {
 	)
 }
 
+// ----- loaders -----
+
+func NewLoaders () map[string](*dataloader.Loader) {
+	// we can do here all per-request stuff
+	return map[string]*dataloader.Loader{
+		"driver": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
+			var results []*dataloader.Result
+			keysString := make([]string, len(keys))
+			for idx, e := range keys {
+				keysString[idx] = e.String()
+			}
+			res := sql(fmt.Sprintf("select * from Driver where driver_id in (%s)", strings.Join(keysString, ", "))) // Oh. Invalid request if empty list
+			data := map[int]sqlite3.RowMap{}
+			for _, e := range res {
+				data[int(e["driver_id"].(int64))] = e
+			}
+			for _, e := range keys {
+				r := e.String() // TODO use e.Raw().cast
+				i, _ := strconv.Atoi(r)
+				d := data[i]
+				results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
+			}
+			return results
+		}),
+		"customer": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
+			var results []*dataloader.Result
+			keysString := make([]string, len(keys))
+			for idx, e := range keys {
+				keysString[idx] = e.String()
+			}
+			res := sql(fmt.Sprintf("select * from Customer where customer_id in (%s)", strings.Join(keysString, ", "))) // Oh. Invalid request if empty list
+			data := map[int]sqlite3.RowMap{}
+			for _, e := range res {
+				data[int(e["driver_id"].(int64))] = e
+			}
+			for _, e := range keys {
+				r := e.String() // TODO use e.Raw().cast
+				i, _ := strconv.Atoi(r)
+				d := data[i]
+				results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
+			}
+			return results
+		}),
+	}
+}
+
 // ----- m.a.i.n -----
 
 func main() {
@@ -243,8 +254,6 @@ func main() {
 					return nil, errors.New("id arg required")
 				}
 				res := sql(fmt.Sprintf("select * from Customer where customer_id=%d", customerId))
-				fmt.Printf("customer resolver params: %+v\n", p.Args)
-				fmt.Printf("%+v\n", res)
 				if len(res) == 0 {
 					return nil, nil
 				}
@@ -271,7 +280,7 @@ func main() {
 		Schema: &schema,
 		Pretty: true,
 		RootObjectFn: func(ctx context.Context, r *http.Request) map[string]interface{} { // POC init req
-			return map[string]interface{}{"dataloaders": "OK"}
+			return map[string]interface{}{"dataloaders": NewLoaders()}
 		},
 	})
 	http.Handle("/gql", handler)
