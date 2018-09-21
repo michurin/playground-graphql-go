@@ -80,7 +80,7 @@ func (r *Driver) Resolve(p graphql.ResolveParams) (interface{}, error) {
 	case "id":
 		return r.id, nil
 	case "name":
-		trunk := getLoaderFnByName(p, "driver", dataloader.StringKey(fmt.Sprintf("%d", r.id)))
+		trunk := getLoaderFnByName(p, "driver", NewIntKey(r.id))
 		return func() (interface{}, error) {
 			data, err := trunk()
 			if err != nil {
@@ -89,9 +89,7 @@ func (r *Driver) Resolve(p graphql.ResolveParams) (interface{}, error) {
 			return data.(sqlite3.RowMap)["name"], nil
 		}, nil
 	case "rides":
-		trunk := getLoaderFnByName(p, "rides_by_driver_id",
-			dataloader.StringKey(fmt.Sprintf("%d", r.id)),
-		)
+		trunk := getLoaderFnByName(p, "rides_by_driver_id", NewIntKey(r.id))
 		return func() (interface{}, error) {
 			data, err := trunk()
 			if err != nil {
@@ -124,7 +122,7 @@ func (r *Customer) Resolve(p graphql.ResolveParams) (interface{}, error) {
 	case "id":
 		return r.id, nil
 	case "name":
-		trunk := getLoaderFnByName(p, "customer", dataloader.StringKey(fmt.Sprintf("%d", r.id)))
+		trunk := getLoaderFnByName(p, "customer", NewIntKey(r.id))
 		return func() (interface{}, error) {
 			data, err := trunk()
 			if err != nil {
@@ -133,9 +131,7 @@ func (r *Customer) Resolve(p graphql.ResolveParams) (interface{}, error) {
 			return data.(sqlite3.RowMap)["name"], nil
 		}, nil
 	case "rides":
-		trunk := getLoaderFnByName(p, "rides_by_customer_id", // Only one change: name of loader
-			dataloader.StringKey(fmt.Sprintf("%d", r.id)),
-		)
+		trunk := getLoaderFnByName(p, "rides_by_customer_id", NewIntKey(r.id)) // Only one change: name of loader
 		return func() (interface{}, error) {
 			data, err := trunk()
 			if err != nil {
@@ -170,7 +166,7 @@ type Ride struct {
 
 func (r *Ride) getTrunk(p graphql.ResolveParams) dataloader.Thunk {
 	if r.trunk == nil {
-		r.trunk = getLoaderFnByName(p, "ride", dataloader.StringKey(fmt.Sprintf("%d", r.id)))
+		r.trunk = getLoaderFnByName(p, "ride", NewIntKey(r.id))
 	}
 	return r.trunk
 }
@@ -225,6 +221,26 @@ type CompleteRide struct {
 
 // ----- loaders -----
 
+// Key interface (in fact, dataloader uses .String() as key)
+
+type IntKey struct {
+	raw int
+	str string
+}
+
+func (k IntKey) String() string { return k.str }
+
+func (k IntKey) Raw() interface{} { return k.raw }
+
+func NewIntKey(i int) IntKey {
+	return IntKey{
+		raw: i,
+		str: strconv.Itoa(i),
+	}
+}
+
+// Collection of loaders
+
 func NewLoaders() map[string](*dataloader.Loader) {
 	// we can do here all per-request stuff
 	fmt.Println("Loaders created")
@@ -241,9 +257,7 @@ func NewLoaders() map[string](*dataloader.Loader) {
 				data[int(e["driver_id"].(int64))] = e
 			}
 			for _, e := range keys {
-				r := e.String() // TODO use e.Raw().cast
-				i, _ := strconv.Atoi(r)
-				d := data[i]
+				d := data[e.Raw().(int)]
 				results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
 			}
 			return results
@@ -260,9 +274,7 @@ func NewLoaders() map[string](*dataloader.Loader) {
 				data[int(e["customer_id"].(int64))] = e
 			}
 			for _, e := range keys {
-				r := e.String() // TODO use e.Raw().cast
-				i, _ := strconv.Atoi(r)
-				d := data[i]
+				d := data[e.Raw().(int)]
 				results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
 			}
 			return results
@@ -279,9 +291,7 @@ func NewLoaders() map[string](*dataloader.Loader) {
 				data[int(e["ride_id"].(int64))] = e
 			}
 			for _, e := range keys {
-				r := e.String() // TODO use e.Raw().cast
-				i, _ := strconv.Atoi(r)
-				d := data[i]
+				d := data[e.Raw().(int)]
 				results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
 			}
 			return results
@@ -302,9 +312,7 @@ func NewLoaders() map[string](*dataloader.Loader) {
 				data[i] = append(data[i], e)
 			}
 			for _, e := range keys {
-				r := e.String() // TODO use e.Raw().cast
-				i, _ := strconv.Atoi(r)
-				d := data[i]
+				d := data[e.Raw().(int)]
 				results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
 			}
 			return results
@@ -325,9 +333,7 @@ func NewLoaders() map[string](*dataloader.Loader) {
 				data[i] = append(data[i], e)
 			}
 			for _, e := range keys {
-				r := e.String() // TODO use e.Raw().cast
-				i, _ := strconv.Atoi(r)
-				d := data[i]
+				d := data[e.Raw().(int)]
 				results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
 			}
 			return results
