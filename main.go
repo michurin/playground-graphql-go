@@ -59,7 +59,7 @@ func handlerWrapper(h http.Handler) *gtHandler {
 
 // ----- util -----
 
-func getLoaderFnByName(p graphql.ResolveParams, name string, key dataloader.Key) func() (interface{}, error) {
+func getLoaderFnByName(p graphql.ResolveParams, name string, key dataloader.Key) dataloader.Thunk {
 	return p.Context.Value("dataloaders").(map[string]*dataloader.Loader)[name].Load(p.Context, key)
 }
 
@@ -165,10 +165,10 @@ func NewCustomer(id int) *Customer {
 
 type Ride struct {
 	id    int
-	trunk func() (interface{}, error)
+	trunk dataloader.Thunk
 }
 
-func (r *Ride) getTrunk(p graphql.ResolveParams) func() (interface{}, error) {
+func (r *Ride) getTrunk(p graphql.ResolveParams) dataloader.Thunk {
 	if r.trunk == nil {
 		r.trunk = getLoaderFnByName(p, "ride", dataloader.StringKey(fmt.Sprintf("%d", r.id)))
 	}
