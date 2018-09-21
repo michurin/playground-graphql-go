@@ -14,16 +14,6 @@ import (
 	"github.com/mxk/go-sqlite/sqlite3"
 )
 
-// TODO:
-// + custom types
-// + arguments
-// + args from parent nodes (use .source inst)
-// + cache?.. recursion?..
-// + handle start of request and fill context
-// + use dataloader
-// + LoadMany and rides-by-driver like requests using dataLoader
-// + handler wrapper to force context and headers
-
 // ----- draft sql interface -----
 
 func sql(sql string) []sqlite3.RowMap {
@@ -73,115 +63,164 @@ func getLoaderFnByName(p graphql.ResolveParams, name string, key dataloader.Key)
 	return p.Context.Value("dataloaders").(map[string]*dataloader.Loader)[name].Load(p.Context, key)
 }
 
-func loaderFn(p graphql.ResolveParams, key dataloader.Key) func() (interface{}, error) {
-	return getLoaderFnByName(p, p.Info.FieldName, key)
+// ----- business objects -----
+
+// Driver
+
+type Driver struct {
+	id int
 }
 
-// ----- types -----
+func NewDriver(id int) *Driver {
+	return &Driver{id: id}
+}
 
-var DriverType = graphql.NewObject(graphql.ObjectConfig{
-	Name: "driver", // used by graphlql-relay
-	Fields: graphql.Fields{
-		"id": &graphql.Field{
-			Type: graphql.Int,
-			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				return p.Source.(sqlite3.RowMap)["driver_id"], nil
-			},
-		},
-		"name": &graphql.Field{
-			Type: graphql.String,
-			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				return p.Source.(sqlite3.RowMap)["name"], nil
-				// The same effect
-				//name := p.Source.(sqlite3.RowMap)["name"]
-				//fmt.Printf("INFO: %#v\n", p.Info.RootValue)
-				//fmt.Println("[FR] Prepare function-result for", name)
-				//return func() (interface{}, error) {
-				//	fmt.Println("[FR] Call function-result for", name)
-				//	return name, nil
-				//}, nil
-			},
-		},
-	},
-})
+func (r *Driver) Resolve(p graphql.ResolveParams) (interface{}, error) {
+	switch p.Info.FieldName {
+	case "id":
+		return r.id, nil
+	case "name":
+		trunk := getLoaderFnByName(p, "driver", dataloader.StringKey(fmt.Sprintf("%d", r.id)))
+		return func() (interface{}, error) {
+			data, err := trunk()
+			if err != nil {
+				return nil, err
+			}
+			return data.(sqlite3.RowMap)["name"], nil
+		}, nil
+	case "rides":
+		trunk := getLoaderFnByName(p, "rides_by_driver_id",
+			dataloader.StringKey(fmt.Sprintf("%d", r.id)),
+		)
+		return func() (interface{}, error) {
+			data, err := trunk()
+			if err != nil {
+				return nil, err
+			}
+			dataArray := data.([]sqlite3.RowMap)
+			r := make([]*CompleteRide, len(dataArray))
+			for i, e := range dataArray {
+				r[i] = &CompleteRide{
+					Id:          int(e["ride_id"].(int64)),
+					Driver:      NewDriver(int(e["driver_id"].(int64))),
+					Customer:    NewCustomer(int(e["customer_id"].(int64))),
+					Destination: e["destination"].(string),
+				}
+			}
+			return r, nil
+		}, nil
+	}
+	return nil, errors.New("Unknown field " + p.Info.FieldName)
+}
 
-var CustomerType = graphql.NewObject(graphql.ObjectConfig{
-	Name: "customer",
-	Fields: graphql.Fields{
-		"id": &graphql.Field{
-			Type: graphql.Int,
-			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				return p.Source.(sqlite3.RowMap)["customer_id"], nil
-			},
-		},
-		"name": &graphql.Field{
-			Type: graphql.String,
-			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				return p.Source.(sqlite3.RowMap)["name"], nil
-			},
-		},
-	},
-})
+// Customer
 
-var RideType = graphql.NewObject(graphql.ObjectConfig{
-	Name: "ride",
-	Fields: graphql.Fields{
-		"id": &graphql.Field{
-			Type: graphql.Int,
-			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				return p.Source.(sqlite3.RowMap)["ride_id"], nil
-			},
-		},
-		"driver": &graphql.Field{
-			Type: DriverType,
-			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				driverId := p.Source.(sqlite3.RowMap)["driver_id"]
-				return loaderFn(p, dataloader.StringKey(fmt.Sprintf("%d", driverId))), nil
-			},
-		},
-		"customer": &graphql.Field{
-			Type: CustomerType,
-			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				customerId := p.Source.(sqlite3.RowMap)["customer_id"]
-				return loaderFn(p, dataloader.StringKey(fmt.Sprintf("%d", customerId))), nil
-			},
-		},
-		"destination": &graphql.Field{
-			Type: graphql.String,
-			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				return p.Source.(sqlite3.RowMap)["destination"], nil
-			},
-		},
-	},
-})
+type Customer struct {
+	id int
+}
 
-func init() {
-	CustomerType.AddFieldConfig(
-		"rides",
-		&graphql.Field{ // synthetic field
-			Type: graphql.NewList(RideType),
-			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				customerId := p.Source.(sqlite3.RowMap)["customer_id"]
-				fn := getLoaderFnByName(p, "rides_by_customer_id",
-					dataloader.StringKey(fmt.Sprintf("%d", customerId)),
-				)
-				return fn, nil
-			},
-		},
-	)
-	DriverType.AddFieldConfig(
-		"rides",
-		&graphql.Field{ // synthetic field
-			Type: graphql.NewList(RideType),
-			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				driverId := p.Source.(sqlite3.RowMap)["driver_id"]
-				fn := getLoaderFnByName(p, "rides_by_driver_id",
-					dataloader.StringKey(fmt.Sprintf("%d", driverId)),
-				)
-				return fn, nil
-			},
-		},
-	)
+func (r *Customer) Resolve(p graphql.ResolveParams) (interface{}, error) {
+	switch p.Info.FieldName {
+	case "id":
+		return r.id, nil
+	case "name":
+		trunk := getLoaderFnByName(p, "customer", dataloader.StringKey(fmt.Sprintf("%d", r.id)))
+		return func() (interface{}, error) {
+			data, err := trunk()
+			if err != nil {
+				return nil, err
+			}
+			return data.(sqlite3.RowMap)["name"], nil
+		}, nil
+	case "rides":
+		trunk := getLoaderFnByName(p, "rides_by_customer_id", // Only one change: name of loader
+			dataloader.StringKey(fmt.Sprintf("%d", r.id)),
+		)
+		return func() (interface{}, error) {
+			data, err := trunk()
+			if err != nil {
+				return nil, err
+			}
+			dataArray := data.([]sqlite3.RowMap)
+			r := make([]*CompleteRide, len(dataArray))
+			for i, e := range dataArray {
+				r[i] = &CompleteRide{
+					Id:          int(e["ride_id"].(int64)),
+					Driver:      NewDriver(int(e["driver_id"].(int64))),
+					Customer:    NewCustomer(int(e["customer_id"].(int64))),
+					Destination: e["destination"].(string),
+				}
+			}
+			return r, nil
+		}, nil
+	}
+	return nil, errors.New("Unknown field " + p.Info.FieldName)
+}
+
+func NewCustomer(id int) *Customer {
+	return &Customer{id: id}
+}
+
+// Ride
+
+type Ride struct {
+	id    int
+	trunk func() (interface{}, error)
+}
+
+func (r *Ride) getTrunk(p graphql.ResolveParams) func() (interface{}, error) {
+	if r.trunk == nil {
+		r.trunk = getLoaderFnByName(p, "ride", dataloader.StringKey(fmt.Sprintf("%d", r.id)))
+	}
+	return r.trunk
+}
+
+func (r *Ride) Resolve(p graphql.ResolveParams) (interface{}, error) {
+	switch p.Info.FieldName {
+	case "id":
+		return r.id, nil
+	case "driver":
+		trunk := r.getTrunk(p)
+		return func() (interface{}, error) {
+			data, err := trunk()
+			if err != nil {
+				return nil, err
+			}
+			return NewDriver(int(data.(sqlite3.RowMap)["driver_id"].(int64))), nil
+		}, nil
+	case "customer":
+		trunk := r.getTrunk(p)
+		return func() (interface{}, error) {
+			data, err := trunk()
+			if err != nil {
+				return nil, err
+			}
+			return NewCustomer(int(data.(sqlite3.RowMap)["customer_id"].(int64))), nil
+		}, nil
+	case "destination":
+		trunk := r.getTrunk(p)
+		return func() (interface{}, error) {
+			data, err := trunk()
+			if err != nil {
+				return nil, err
+			}
+			return data.(sqlite3.RowMap)["destination"], nil
+		}, nil
+	}
+	return nil, errors.New("Unknown field " + p.Info.FieldName)
+}
+
+func NewRide(id int) *Ride {
+	return &Ride{id: id}
+}
+
+// Ride: completely resolved
+
+type CompleteRide struct {
+	Id          int
+	Driver      *Driver
+	Customer    *Customer
+	Destination string
 }
 
 // ----- loaders -----
@@ -219,6 +258,25 @@ func NewLoaders() map[string](*dataloader.Loader) {
 			data := map[int]sqlite3.RowMap{}
 			for _, e := range res {
 				data[int(e["customer_id"].(int64))] = e
+			}
+			for _, e := range keys {
+				r := e.String() // TODO use e.Raw().cast
+				i, _ := strconv.Atoi(r)
+				d := data[i]
+				results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
+			}
+			return results
+		}),
+		"ride": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
+			var results []*dataloader.Result
+			keysString := make([]string, len(keys))
+			for idx, e := range keys {
+				keysString[idx] = e.String()
+			}
+			res := sql(fmt.Sprintf("select * from Ride where ride_id in (%s)", strings.Join(keysString, ", "))) // Oh. Invalid request if empty list
+			data := map[int]sqlite3.RowMap{}
+			for _, e := range res {
+				data[int(e["ride_id"].(int64))] = e
 			}
 			for _, e := range keys {
 				r := e.String() // TODO use e.Raw().cast
@@ -280,56 +338,72 @@ func NewLoaders() map[string](*dataloader.Loader) {
 // ----- m.a.i.n -----
 
 func main() {
+	var driverType = graphql.NewObject(graphql.ObjectConfig{
+		Name: "driver", // used by graphlql-relay
+		Fields: graphql.Fields{
+			"id":   &graphql.Field{Type: graphql.Int},
+			"name": &graphql.Field{Type: graphql.String},
+		},
+	})
+
+	var customerType = graphql.NewObject(graphql.ObjectConfig{
+		Name: "customer",
+		Fields: graphql.Fields{
+			"id":   &graphql.Field{Type: graphql.Int},
+			"name": &graphql.Field{Type: graphql.String},
+		},
+	})
+
+	var rideType = graphql.NewObject(graphql.ObjectConfig{
+		Name: "ride",
+		Fields: graphql.Fields{
+			"id":          &graphql.Field{Type: graphql.Int},
+			"driver":      &graphql.Field{Type: driverType},
+			"customer":    &graphql.Field{Type: customerType},
+			"destination": &graphql.Field{Type: graphql.String},
+		},
+	})
+
+	customerType.AddFieldConfig("rides", &graphql.Field{Type: graphql.NewList(rideType)})
+	driverType.AddFieldConfig("rides", &graphql.Field{Type: graphql.NewList(rideType)})
+
 	queryType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "RootQuery",
 		Fields: graphql.Fields{
 			"x_ride": &graphql.Field{
 				Name: "ride",
-				Type: RideType,
+				Type: rideType,
 				Args: graphql.FieldConfigArgument{
 					"id": &graphql.ArgumentConfig{
 						Type: graphql.Int,
 					},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					rideId := p.Args["id"]
-					if rideId == nil {
-						return nil, errors.New("id arg required")
-					}
-					res := sql(fmt.Sprintf("select * from Ride where ride_id=%d", rideId))
-					if len(res) == 0 {
-						return nil, nil
-					}
-					return res[0], nil
+					rideId := p.Args["id"].(int)
+					return NewRide(rideId), nil
 				},
 			},
 			"x_customer": &graphql.Field{
-				Type: CustomerType,
+				Type: customerType,
 				Args: graphql.FieldConfigArgument{
 					"id": &graphql.ArgumentConfig{
 						Type: graphql.Int,
 					},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					customerId := p.Args["id"]
-					if customerId == nil {
-						return nil, errors.New("id arg required")
-					}
-					res := sql(fmt.Sprintf("select * from Customer where customer_id=%d", customerId))
-					if len(res) == 0 {
-						return nil, nil
-					}
-					return res[0], nil
+					customerId := p.Args["id"].(int)
+					return NewCustomer(customerId), nil
 				},
 			},
 		},
 	})
+
 	mutationType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "Mutation",
 		Fields: graphql.Fields{
 			"add_ride": &graphql.Field{
 				Name: "add_ride",
-				Type: RideType,
+				Type: rideType,
 				Args: graphql.FieldConfigArgument{
 					"customer_id": &graphql.ArgumentConfig{
 						Type: graphql.NewNonNull(graphql.Int),
@@ -346,26 +420,35 @@ func main() {
 					res := sql("select max(ride_id) max_ride_id from Ride")
 					nextRideId := res[0]["max_ride_id"].(int64) + 1
 					fmt.Println("next", nextRideId)
+					customerId := p.Args["customer_id"].(int)
+					driverId := p.Args["driver_id"].(int)
+					destination := p.Args["destination"].(string)
 					res = sql(fmt.Sprintf(
 						"insert into Ride (ride_id, customer_id, driver_id, destination) values (%d, %d, %d, \"%s\")",
 						nextRideId,
-						p.Args["customer_id"].(int),
-						p.Args["driver_id"].(int),
-						p.Args["destination"].(string),
+						customerId,
+						driverId,
+						destination,
 					))
 					res = sql(fmt.Sprintf(
 						"select * from Ride where ride_id=%d",
 						nextRideId,
 					))
-					return res[0], nil // return res for compat
+					return &CompleteRide{
+						Id:          int(nextRideId),
+						Driver:      NewDriver(driverId),
+						Customer:    NewCustomer(customerId),
+						Destination: destination,
+					}, nil
 				},
 			},
 		},
 	})
+
 	var schema, err = graphql.NewSchema(graphql.SchemaConfig{
 		Query:    queryType,
 		Mutation: mutationType,
-		// Types: []graphql.Type{CustomerType}, // ??
+		// Types: []graphql.Type{customerType}, // ??
 	})
 	if err != nil {
 		panic(err)
