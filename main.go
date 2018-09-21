@@ -34,18 +34,19 @@ func sql(sql string) []sqlite3.RowMap {
 		panic(err)
 	}
 	s, err := c.Query(sql)
-	if err != nil {
-		panic(sql + " -> " + err.Error())
-	}
-	for {
-		row := make(sqlite3.RowMap)
-		s.Scan(row)
-		result = append(result, row)
-		err = s.Next()
-		if err != nil {
-			break
+	if err == nil {
+		for {
+			row := make(sqlite3.RowMap)
+			s.Scan(row)
+			result = append(result, row)
+			err = s.Next()
+			if err != nil {
+				break
+			}
 		}
 	}
+	c.Commit()
+	c.Close()
 	fmt.Printf("SQL: %s -> %v\n", sql, result)
 	return result
 }
@@ -58,6 +59,7 @@ type gtHandler struct {
 
 func (h *gtHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("X-Michurin", "Here!")
+	// TODO We will create loader on mutations too. Is it ok?
 	h.origHandler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), "dataloaders", NewLoaders())))
 }
 
@@ -280,54 +282,91 @@ func NewLoaders() map[string](*dataloader.Loader) {
 // ----- m.a.i.n -----
 
 func main() {
-	fields := graphql.Fields{
-		"x_ride": &graphql.Field{
-			Name: "ride",
-			Type: RideType,
-			Args: graphql.FieldConfigArgument{
-				"id": &graphql.ArgumentConfig{
-					Type: graphql.Int,
+	queryType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "RootQuery",
+		Fields: graphql.Fields{
+			"x_ride": &graphql.Field{
+				Name: "ride",
+				Type: RideType,
+				Args: graphql.FieldConfigArgument{
+					"id": &graphql.ArgumentConfig{
+						Type: graphql.Int,
+					},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					rideId := p.Args["id"]
+					if rideId == nil {
+						return nil, errors.New("id arg required")
+					}
+					res := sql(fmt.Sprintf("select * from Ride where ride_id=%d", rideId))
+					if len(res) == 0 {
+						return nil, nil
+					}
+					return res[0], nil
 				},
 			},
-			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				rideId := p.Args["id"]
-				if rideId == nil {
-					return nil, errors.New("id arg required")
-				}
-				res := sql(fmt.Sprintf("select * from Ride where ride_id=%d", rideId))
-				if len(res) == 0 {
-					return nil, nil
-				}
-				return res[0], nil
-			},
-		},
-		"x_customer": &graphql.Field{
-			Type: CustomerType,
-			Args: graphql.FieldConfigArgument{
-				"id": &graphql.ArgumentConfig{
-					Type: graphql.Int,
+			"x_customer": &graphql.Field{
+				Type: CustomerType,
+				Args: graphql.FieldConfigArgument{
+					"id": &graphql.ArgumentConfig{
+						Type: graphql.Int,
+					},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					customerId := p.Args["id"]
+					if customerId == nil {
+						return nil, errors.New("id arg required")
+					}
+					res := sql(fmt.Sprintf("select * from Customer where customer_id=%d", customerId))
+					if len(res) == 0 {
+						return nil, nil
+					}
+					return res[0], nil
 				},
 			},
-			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				customerId := p.Args["id"]
-				if customerId == nil {
-					return nil, errors.New("id arg required")
-				}
-				res := sql(fmt.Sprintf("select * from Customer where customer_id=%d", customerId))
-				if len(res) == 0 {
-					return nil, nil
-				}
-				return res[0], nil
+		},
+	})
+	mutationType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "Mutation",
+		Fields: graphql.Fields{
+			"add_ride": &graphql.Field{
+				Name: "add_ride",
+				Type: RideType,
+				Args: graphql.FieldConfigArgument{
+					"customer_id": &graphql.ArgumentConfig{
+						Type: graphql.NewNonNull(graphql.Int),
+					},
+					"driver_id": &graphql.ArgumentConfig{
+						Type: graphql.NewNonNull(graphql.Int),
+					},
+					"destination": &graphql.ArgumentConfig{
+						Type: graphql.NewNonNull(graphql.String),
+					},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					// Oh. Just POC. Very (very!) bad code
+					res := sql("select max(ride_id) max_ride_id from Ride")
+					nextRideId := res[0]["max_ride_id"].(int64) + 1
+					fmt.Println("next", nextRideId)
+					res = sql(fmt.Sprintf(
+						"insert into Ride (ride_id, customer_id, driver_id, destination) values (%d, %d, %d, \"%s\")",
+						nextRideId,
+						p.Args["customer_id"].(int),
+						p.Args["driver_id"].(int),
+						p.Args["destination"].(string),
+					))
+					res = sql(fmt.Sprintf(
+						"select * from Ride where ride_id=%d",
+						nextRideId,
+					))
+					return res[0], nil // return res for compat
+				},
 			},
 		},
-	}
-	rootQuery := graphql.ObjectConfig{
-		Name:   "RootQuery",
-		Fields: fields,
-	}
-
+	})
 	var schema, err = graphql.NewSchema(graphql.SchemaConfig{
-		Query: graphql.NewObject(rootQuery),
+		Query:    queryType,
+		Mutation: mutationType,
 		// Types: []graphql.Type{CustomerType}, // ??
 	})
 	if err != nil {
@@ -348,6 +387,7 @@ func main() {
 	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_ride(id: 3) {id destination customer {id name rides {id driver {name}}}} }'")
 	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_ride(id: 3) {id destination customer {id name rides {id driver {name rides {id}}}}} }")
 	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_customer(id: 200) {rides{ driver{rides{ driver{rides{ driver{name} }} }} }} }'")
-
+	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'mutation { add_ride(customer_id:200 driver_id:1 destination:\"Home\"){id, customer{name}} }'")
+	fmt.Println()
 	http.ListenAndServe(":8080", nil)
 }
