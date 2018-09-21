@@ -241,102 +241,64 @@ func NewIntKey(i int) IntKey {
 
 // Collection of loaders
 
+func keysToString(keys dataloader.Keys) string {
+	keysString := make([]string, len(keys))
+	for idx, e := range keys {
+		keysString[idx] = e.String()
+	}
+	return strings.Join(keysString, ", ")
+}
+
+func loadOneToOne(sqlTemplate string, keyField string, keys dataloader.Keys) []*dataloader.Result {
+	var results []*dataloader.Result
+	res := sql(fmt.Sprintf(sqlTemplate, keysToString(keys))) // Oh. Invalid request if empty list
+	data := map[int]sqlite3.RowMap{}
+	for _, e := range res {
+		data[int(e[keyField].(int64))] = e
+	}
+	for _, e := range keys {
+		d := data[e.Raw().(int)]
+		results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
+	}
+	return results
+}
+
+func loadOneToMany(sqlTemplate string, keyField string, keys dataloader.Keys) []*dataloader.Result {
+	var results []*dataloader.Result
+	res := sql(fmt.Sprintf(sqlTemplate, keysToString(keys))) // Oh. Invalid request if empty list
+	if len(res) == 0 {
+		return nil
+	}
+	data := map[int][]sqlite3.RowMap{}
+	for _, e := range res {
+		i := int(e[keyField].(int64))
+		data[i] = append(data[i], e)
+	}
+	for _, e := range keys {
+		d := data[e.Raw().(int)]
+		results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
+	}
+	return results
+}
+
 func NewLoaders() map[string](*dataloader.Loader) {
 	// we can do here all per-request stuff
 	fmt.Println("Loaders created")
 	return map[string]*dataloader.Loader{
 		"driver": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
-			var results []*dataloader.Result
-			keysString := make([]string, len(keys))
-			for idx, e := range keys {
-				keysString[idx] = e.String()
-			}
-			res := sql(fmt.Sprintf("select * from Driver where driver_id in (%s)", strings.Join(keysString, ", "))) // Oh. Invalid request if empty list
-			data := map[int]sqlite3.RowMap{}
-			for _, e := range res {
-				data[int(e["driver_id"].(int64))] = e
-			}
-			for _, e := range keys {
-				d := data[e.Raw().(int)]
-				results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
-			}
-			return results
+			return loadOneToOne("select * from Driver where driver_id in (%s)", "driver_id", keys)
 		}),
 		"customer": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
-			var results []*dataloader.Result
-			keysString := make([]string, len(keys))
-			for idx, e := range keys {
-				keysString[idx] = e.String()
-			}
-			res := sql(fmt.Sprintf("select * from Customer where customer_id in (%s)", strings.Join(keysString, ", "))) // Oh. Invalid request if empty list
-			data := map[int]sqlite3.RowMap{}
-			for _, e := range res {
-				data[int(e["customer_id"].(int64))] = e
-			}
-			for _, e := range keys {
-				d := data[e.Raw().(int)]
-				results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
-			}
-			return results
+			return loadOneToOne("select * from Customer where customer_id in (%s)", "customer_id", keys)
 		}),
 		"ride": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
-			var results []*dataloader.Result
-			keysString := make([]string, len(keys))
-			for idx, e := range keys {
-				keysString[idx] = e.String()
-			}
-			res := sql(fmt.Sprintf("select * from Ride where ride_id in (%s)", strings.Join(keysString, ", "))) // Oh. Invalid request if empty list
-			data := map[int]sqlite3.RowMap{}
-			for _, e := range res {
-				data[int(e["ride_id"].(int64))] = e
-			}
-			for _, e := range keys {
-				d := data[e.Raw().(int)]
-				results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
-			}
-			return results
+			return loadOneToOne("select * from Ride where ride_id in (%s)", "ride_id", keys)
 		}),
 		"rides_by_customer_id": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
-			var results []*dataloader.Result
-			keysString := make([]string, len(keys))
-			for idx, e := range keys {
-				keysString[idx] = e.String()
-			}
-			res := sql(fmt.Sprintf("select * from Ride where customer_id in (%s)", strings.Join(keysString, ", "))) // Oh. Invalid request if empty list
-			if len(res) == 0 {
-				return nil
-			}
-			data := map[int][]sqlite3.RowMap{}
-			for _, e := range res {
-				i := int(e["customer_id"].(int64))
-				data[i] = append(data[i], e)
-			}
-			for _, e := range keys {
-				d := data[e.Raw().(int)]
-				results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
-			}
-			return results
+			return loadOneToMany("select * from Ride where customer_id in (%s)", "customer_id", keys)
 		}),
 		"rides_by_driver_id": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
-			var results []*dataloader.Result
-			keysString := make([]string, len(keys))
-			for idx, e := range keys {
-				keysString[idx] = e.String()
-			}
-			res := sql(fmt.Sprintf("select * from Ride where driver_id in (%s)", strings.Join(keysString, ", "))) // Oh. Invalid request if empty list
-			if len(res) == 0 {
-				return nil
-			}
-			data := map[int][]sqlite3.RowMap{}
-			for _, e := range res {
-				i := int(e["driver_id"].(int64))
-				data[i] = append(data[i], e)
-			}
-			for _, e := range keys {
-				d := data[e.Raw().(int)]
-				results = append(results, &dataloader.Result{d, nil}) // TODO we can put errors here
-			}
-			return results
+			return loadOneToMany("select * from Ride where driver_id in (%s)", "driver_id", keys)
 		}),
 	}
 }
