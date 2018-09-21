@@ -92,16 +92,14 @@ var DriverType = graphql.NewObject(graphql.ObjectConfig{
 			Type: graphql.String,
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				return p.Source.(sqlite3.RowMap)["name"], nil
-				/*
-					// The same
-					name := p.Source.(sqlite3.RowMap)["name"]
-					fmt.Printf("INFO: %#v\n", p.Info.RootValue)
-					fmt.Println("[FR] Prepare function-result for", name)
-					return func() (interface{}, error) {
-						fmt.Println("[FR] Call function-result for", name)
-						return name, nil
-					}, nil
-				*/
+				// The same effect
+				//name := p.Source.(sqlite3.RowMap)["name"]
+				//fmt.Printf("INFO: %#v\n", p.Info.RootValue)
+				//fmt.Println("[FR] Prepare function-result for", name)
+				//return func() (interface{}, error) {
+				//	fmt.Println("[FR] Call function-result for", name)
+				//	return name, nil
+				//}, nil
 			},
 		},
 	},
