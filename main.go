@@ -342,21 +342,32 @@ func main() {
 				Name: "ride",
 				Type: rideType,
 				Args: graphql.FieldConfigArgument{
-					"id": &graphql.ArgumentConfig{
-						Type: graphql.Int,
-					},
+					"id": &graphql.ArgumentConfig{Type: graphql.Int},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					rideId := p.Args["id"].(int)
 					return NewRide(rideId), nil
 				},
 			},
+			"x_rides": &graphql.Field{
+				Name: "rides",
+				Type: graphql.NewList(rideType),
+				Args: graphql.FieldConfigArgument{
+					"ids": &graphql.ArgumentConfig{Type: graphql.NewList(graphql.Int)},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					rideIds := p.Args["ids"].([]interface{})
+					rides := make([]*Ride, len(rideIds))
+					for i, e := range rideIds {
+						rides[i] = NewRide(e.(int))
+					}
+					return rides, nil
+				},
+			},
 			"x_customer": &graphql.Field{
 				Type: customerType,
 				Args: graphql.FieldConfigArgument{
-					"id": &graphql.ArgumentConfig{
-						Type: graphql.Int, // TODO: write variant with graphql.NewList(graphql.Int)
-					},
+					"id": &graphql.ArgumentConfig{Type: graphql.Int},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					customerId := p.Args["id"].(int)
@@ -444,7 +455,8 @@ func main() {
 	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_ride(id: 3) {id destination customer {id name rides {id driver {name}}}} }'")
 	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_ride(id: 3) {id destination customer {id name rides {id driver {name rides {id}}}}} }")
 	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_customer(id: 200) {rides{ driver{rides{ driver{rides{ driver{name} }} }} }} }'")
-	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: applicationgraphql' -d 'mutation { add_ride(params:{customer_id:100 driver_id:1 destination:\"One\"}){id, customer{name}} }'")
+	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_rides(ids:[1 2]){id destination} }'")
+	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'mutation { add_ride(params:{customer_id:100 driver_id:1 destination:\"One\"}){id, customer{name}} }'")
 	fmt.Println()
 	http.ListenAndServe(":8080", nil)
 }
