@@ -355,7 +355,7 @@ func main() {
 				Type: customerType,
 				Args: graphql.FieldConfigArgument{
 					"id": &graphql.ArgumentConfig{
-						Type: graphql.Int,
+						Type: graphql.Int, // TODO: write variant with graphql.NewList(graphql.Int)
 					},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -366,6 +366,21 @@ func main() {
 		},
 	})
 
+	mutationParamsType := graphql.NewNonNull(graphql.NewInputObject(graphql.InputObjectConfig{
+		Name: "complex", // MUST?
+		Fields: graphql.InputObjectConfigFieldMap{
+			"customer_id": &graphql.InputObjectFieldConfig{
+				Type: graphql.NewNonNull(graphql.Int),
+			},
+			"driver_id": &graphql.InputObjectFieldConfig{
+				Type: graphql.NewNonNull(graphql.Int),
+			},
+			"destination": &graphql.InputObjectFieldConfig{
+				Type: graphql.NewNonNull(graphql.String),
+			},
+		},
+	}))
+
 	mutationType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "Mutation",
 		Fields: graphql.Fields{
@@ -373,24 +388,17 @@ func main() {
 				Name: "add_ride",
 				Type: rideType,
 				Args: graphql.FieldConfigArgument{
-					"customer_id": &graphql.ArgumentConfig{
-						Type: graphql.NewNonNull(graphql.Int),
-					},
-					"driver_id": &graphql.ArgumentConfig{
-						Type: graphql.NewNonNull(graphql.Int),
-					},
-					"destination": &graphql.ArgumentConfig{
-						Type: graphql.NewNonNull(graphql.String),
-					},
+					"params": &graphql.ArgumentConfig{Type: mutationParamsType},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					// Oh. Just POC. Very (very!) bad code
+					params := p.Args["params"].(map[string]interface{})
+					customerId := params["customer_id"].(int)
+					driverId := params["driver_id"].(int)
+					destination := params["destination"].(string)
+					// Oh. Just POC. Very (very!) bad code.
+					// We just use sqlite backend to emulate abstract microservice or something else
 					res := sql("select max(ride_id) max_ride_id from Ride")
-					nextRideId := res[0]["max_ride_id"].(int64) + 1
-					fmt.Println("next", nextRideId)
-					customerId := p.Args["customer_id"].(int)
-					driverId := p.Args["driver_id"].(int)
-					destination := p.Args["destination"].(string)
+					nextRideId := int(res[0]["max_ride_id"].(int64)) + 1
 					res = sql(fmt.Sprintf(
 						"insert into Ride (ride_id, customer_id, driver_id, destination) values (%d, %d, %d, \"%s\")",
 						nextRideId,
@@ -403,7 +411,7 @@ func main() {
 						nextRideId,
 					))
 					return &CompleteRide{
-						Id:          int(nextRideId),
+						Id:          nextRideId,
 						Driver:      NewDriver(driverId),
 						Customer:    NewCustomer(customerId),
 						Destination: destination,
@@ -436,7 +444,7 @@ func main() {
 	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_ride(id: 3) {id destination customer {id name rides {id driver {name}}}} }'")
 	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_ride(id: 3) {id destination customer {id name rides {id driver {name rides {id}}}}} }")
 	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_customer(id: 200) {rides{ driver{rides{ driver{rides{ driver{name} }} }} }} }'")
-	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'mutation { add_ride(customer_id:200 driver_id:1 destination:\"Home\"){id, customer{name}} }'")
+	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: applicationgraphql' -d 'mutation { add_ride(params:{customer_id:100 driver_id:1 destination:\"One\"}){id, customer{name}} }'")
 	fmt.Println()
 	http.ListenAndServe(":8080", nil)
 }
