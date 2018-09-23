@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -16,24 +17,29 @@ import (
 
 // ----- draft sql interface -----
 
+const DATABASE = "database.db"
+
+func errorString(prefix string, sql string, err error) string {
+	return fmt.Sprintf("%s [%s] %s: %s", prefix, DATABASE, sql, err.Error())
+}
+
 func sql(sql string) []sqlite3.RowMap {
-	// fmt.Println(sql)
 	var result []sqlite3.RowMap
-	c, err := sqlite3.Open("database.db")
+	c, err := sqlite3.Open(DATABASE)
 	if err != nil {
-		panic(err)
+		panic(errorString("open", sql, err))
 	}
 	s, err := c.Query(sql)
-	if err == nil {
-		for {
-			row := make(sqlite3.RowMap)
-			s.Scan(row)
-			result = append(result, row)
-			err = s.Next()
-			if err != nil {
-				break
-			}
+	for {
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			panic(errorString("fetch", sql, err))
 		}
+		row := make(sqlite3.RowMap)
+		s.Scan(row)
+		result = append(result, row)
+		err = s.Next()
 	}
 	c.Commit()
 	c.Close()
@@ -49,7 +55,6 @@ type gtHandler struct {
 
 func (h *gtHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("X-Michurin", "Here!")
-	// TODO We will create loader on mutations too. Is it ok?
 	h.origHandler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), "dataloaders", NewLoaders())))
 }
 
@@ -64,6 +69,48 @@ func getLoaderFnByName(p graphql.ResolveParams, name string, key dataloader.Key)
 }
 
 // ----- business objects -----
+
+// Util
+
+func callTrunkGetByName(trunk dataloader.Thunk, field string) func() (interface{}, error) {
+	return func() (interface{}, error) {
+		data, err := trunk()
+		if err != nil {
+			return nil, err
+		}
+		return data.(sqlite3.RowMap)[field], nil
+	}
+}
+
+func callTrunkGetIdCast(trunk dataloader.Thunk, field string, caster func(int) interface{}) func() (interface{}, error) {
+	return func() (interface{}, error) {
+		data, err := trunk()
+		if err != nil {
+			return nil, err
+		}
+		return caster(int(data.(sqlite3.RowMap)[field].(int64))), nil
+	}
+}
+
+func callTrunkGetCompleteRides(trunk dataloader.Thunk) func() (interface{}, error) {
+	return func() (interface{}, error) {
+		data, err := trunk()
+		if err != nil {
+			return nil, err
+		}
+		dataArray := data.([]sqlite3.RowMap)
+		r := make([]*CompleteRide, len(dataArray))
+		for i, e := range dataArray {
+			r[i] = &CompleteRide{
+				Id:          int(e["ride_id"].(int64)),
+				Driver:      NewDriver(int(e["driver_id"].(int64))),
+				Customer:    NewCustomer(int(e["customer_id"].(int64))),
+				Destination: e["destination"].(string),
+			}
+		}
+		return r, nil
+	}
+}
 
 // Driver
 
@@ -81,34 +128,12 @@ func (r *Driver) Resolve(p graphql.ResolveParams) (interface{}, error) {
 		return r.id, nil
 	case "name":
 		trunk := getLoaderFnByName(p, "driver", NewIntKey(r.id))
-		return func() (interface{}, error) {
-			data, err := trunk()
-			if err != nil {
-				return nil, err
-			}
-			return data.(sqlite3.RowMap)["name"], nil
-		}, nil
+		return callTrunkGetByName(trunk, "name"), nil
 	case "rides":
 		trunk := getLoaderFnByName(p, "rides_by_driver_id", NewIntKey(r.id))
-		return func() (interface{}, error) {
-			data, err := trunk()
-			if err != nil {
-				return nil, err
-			}
-			dataArray := data.([]sqlite3.RowMap)
-			r := make([]*CompleteRide, len(dataArray))
-			for i, e := range dataArray {
-				r[i] = &CompleteRide{
-					Id:          int(e["ride_id"].(int64)),
-					Driver:      NewDriver(int(e["driver_id"].(int64))),
-					Customer:    NewCustomer(int(e["customer_id"].(int64))),
-					Destination: e["destination"].(string),
-				}
-			}
-			return r, nil
-		}, nil
+		return callTrunkGetCompleteRides(trunk), nil
 	}
-	return nil, errors.New("Unknown field " + p.Info.FieldName)
+	return nil, errors.New("Driver resolver: Unknown field " + p.Info.FieldName)
 }
 
 // Customer
@@ -123,34 +148,12 @@ func (r *Customer) Resolve(p graphql.ResolveParams) (interface{}, error) {
 		return r.id, nil
 	case "name":
 		trunk := getLoaderFnByName(p, "customer", NewIntKey(r.id))
-		return func() (interface{}, error) {
-			data, err := trunk()
-			if err != nil {
-				return nil, err
-			}
-			return data.(sqlite3.RowMap)["name"], nil
-		}, nil
+		return callTrunkGetByName(trunk, "name"), nil
 	case "rides":
-		trunk := getLoaderFnByName(p, "rides_by_customer_id", NewIntKey(r.id)) // Only one change: name of loader
-		return func() (interface{}, error) {
-			data, err := trunk()
-			if err != nil {
-				return nil, err
-			}
-			dataArray := data.([]sqlite3.RowMap)
-			r := make([]*CompleteRide, len(dataArray))
-			for i, e := range dataArray {
-				r[i] = &CompleteRide{
-					Id:          int(e["ride_id"].(int64)),
-					Driver:      NewDriver(int(e["driver_id"].(int64))),
-					Customer:    NewCustomer(int(e["customer_id"].(int64))),
-					Destination: e["destination"].(string),
-				}
-			}
-			return r, nil
-		}, nil
+		trunk := getLoaderFnByName(p, "rides_by_customer_id", NewIntKey(r.id))
+		return callTrunkGetCompleteRides(trunk), nil
 	}
-	return nil, errors.New("Unknown field " + p.Info.FieldName)
+	return nil, errors.New("Customer resolver: Unknown field " + p.Info.FieldName)
 }
 
 func NewCustomer(id int) *Customer {
@@ -177,33 +180,15 @@ func (r *Ride) Resolve(p graphql.ResolveParams) (interface{}, error) {
 		return r.id, nil
 	case "driver":
 		trunk := r.getTrunk(p)
-		return func() (interface{}, error) {
-			data, err := trunk()
-			if err != nil {
-				return nil, err
-			}
-			return NewDriver(int(data.(sqlite3.RowMap)["driver_id"].(int64))), nil
-		}, nil
+		return callTrunkGetIdCast(trunk, "driver_id", func(id int) interface{} { return NewDriver(id) }), nil
 	case "customer":
 		trunk := r.getTrunk(p)
-		return func() (interface{}, error) {
-			data, err := trunk()
-			if err != nil {
-				return nil, err
-			}
-			return NewCustomer(int(data.(sqlite3.RowMap)["customer_id"].(int64))), nil
-		}, nil
+		return callTrunkGetIdCast(trunk, "customer_id", func(id int) interface{} { return NewCustomer(id) }), nil
 	case "destination":
 		trunk := r.getTrunk(p)
-		return func() (interface{}, error) {
-			data, err := trunk()
-			if err != nil {
-				return nil, err
-			}
-			return data.(sqlite3.RowMap)["destination"], nil
-		}, nil
+		return callTrunkGetByName(trunk, "destination"), nil
 	}
-	return nil, errors.New("Unknown field " + p.Info.FieldName)
+	return nil, errors.New("Ride resolver: Unknown field " + p.Info.FieldName)
 }
 
 func NewRide(id int) *Ride {
