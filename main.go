@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -21,6 +22,20 @@ const DATABASE = "database.db"
 
 func errorString(prefix string, sql string, err error) string {
 	return fmt.Sprintf("%s [%s] %s: %s", prefix, DATABASE, sql, err.Error())
+}
+
+func logResult(sql string, result []sqlite3.RowMap) {
+	fmt.Printf("\x1b[1m%s\x1b[0m:\n", sql)
+	for i, r := range result {
+		fields := make([]string, len(r))
+		j := 0
+		for k, v := range r {
+			fields[j] = fmt.Sprintf("%s=\x1b[1;32m%v\x1b[0m", k, v)
+			j += 1
+		}
+		sort.Strings(fields)
+		fmt.Printf("\x1b[1;33m%4d\x1b[0m %s\n", i, strings.Join(fields, " "))
+	}
 }
 
 func sql(sql string) []sqlite3.RowMap {
@@ -43,7 +58,7 @@ func sql(sql string) []sqlite3.RowMap {
 	}
 	c.Commit()
 	c.Close()
-	fmt.Printf("SQL: %s -> %v\n", sql, result)
+	logResult(sql, result)
 	return result
 }
 
@@ -302,7 +317,7 @@ func loadOneToMany(sqlTemplate string, keyField string, keys dataloader.Keys) []
 
 func NewLoaders() map[string](*dataloader.Loader) {
 	// we can do here all per-request stuff
-	fmt.Println("Loaders created")
+	fmt.Println("\x1b[1;34mLoaders created\x1b[0m")
 	return map[string]*dataloader.Loader{
 		"driver": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
 			return loadOneToOne("select * from Driver where driver_id in (%s)", "driver_id", keys)
