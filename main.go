@@ -112,46 +112,79 @@ func callTrunkGetCompleteRides(trunk dataloader.Thunk) func() (interface{}, erro
 	}
 }
 
+func callTrunkGetCompleteRidesDeep(trunk dataloader.Thunk) func() (interface{}, error) {
+	return func() (interface{}, error) {
+		data, err := trunk()
+		if err != nil {
+			return nil, err
+		}
+		dataArray := data.([]sqlite3.RowMap)
+		r := make([]*CompleteRide, len(dataArray))
+		for i, e := range dataArray {
+			r[i] = &CompleteRide{
+				Id:          int(e["ride_id"].(int64)),
+				Driver:      NewDriverWithName(int(e["driver_id"].(int64)), e["name"].(string)),
+				Customer:    NewCustomer(int(e["customer_id"].(int64))),
+				Destination: e["destination"].(string),
+			}
+		}
+		return r, nil
+	}
+}
+
 // Driver
+// features: two constructors to create prefilled structures, see deep_rides implementation in Customer.Resolve
 
 type Driver struct {
-	id int
+	id   int
+	name *string
 }
 
 func NewDriver(id int) *Driver {
 	return &Driver{id: id}
 }
 
-func (r *Driver) Resolve(p graphql.ResolveParams) (interface{}, error) {
+func NewDriverWithName(id int, name string) *Driver {
+	return &Driver{id: id, name: &name}
+}
+
+func (d *Driver) Resolve(p graphql.ResolveParams) (interface{}, error) {
 	switch p.Info.FieldName {
 	case "id":
-		return r.id, nil
+		return d.id, nil
 	case "name":
-		trunk := getLoaderFnByName(p, "driver", NewIntKey(r.id))
+		if d.name != nil {
+			return d.name, nil
+		}
+		trunk := getLoaderFnByName(p, "driver", NewIntKey(d.id))
 		return callTrunkGetByName(trunk, "name"), nil
 	case "rides":
-		trunk := getLoaderFnByName(p, "rides_by_driver_id", NewIntKey(r.id))
+		trunk := getLoaderFnByName(p, "rides_by_driver_id", NewIntKey(d.id))
 		return callTrunkGetCompleteRides(trunk), nil
 	}
 	return nil, errors.New("Driver resolver: Unknown field " + p.Info.FieldName)
 }
 
 // Customer
+// features: extremely simple and minimal
 
 type Customer struct {
 	id int
 }
 
-func (r *Customer) Resolve(p graphql.ResolveParams) (interface{}, error) {
+func (c *Customer) Resolve(p graphql.ResolveParams) (interface{}, error) {
 	switch p.Info.FieldName {
 	case "id":
-		return r.id, nil
+		return c.id, nil
 	case "name":
-		trunk := getLoaderFnByName(p, "customer", NewIntKey(r.id))
+		trunk := getLoaderFnByName(p, "customer", NewIntKey(c.id))
 		return callTrunkGetByName(trunk, "name"), nil
 	case "rides":
-		trunk := getLoaderFnByName(p, "rides_by_customer_id", NewIntKey(r.id))
+		trunk := getLoaderFnByName(p, "rides_by_customer_id", NewIntKey(c.id))
 		return callTrunkGetCompleteRides(trunk), nil
+	case "deep_rides":
+		trunk := getLoaderFnByName(p, "deep_rides_by_customer_id", NewIntKey(c.id))
+		return callTrunkGetCompleteRidesDeep(trunk), nil
 	}
 	return nil, errors.New("Customer resolver: Unknown field " + p.Info.FieldName)
 }
@@ -161,6 +194,7 @@ func NewCustomer(id int) *Customer {
 }
 
 // Ride
+// features: laziness and simplest implementation of prefilling just as separate structure without x.Resolve
 
 type Ride struct {
 	id    int
@@ -279,11 +313,14 @@ func NewLoaders() map[string](*dataloader.Loader) {
 		"ride": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
 			return loadOneToOne("select * from Ride where ride_id in (%s)", "ride_id", keys)
 		}),
+		"rides_by_driver_id": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
+			return loadOneToMany("select * from Ride where driver_id in (%s)", "driver_id", keys)
+		}),
 		"rides_by_customer_id": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
 			return loadOneToMany("select * from Ride where customer_id in (%s)", "customer_id", keys)
 		}),
-		"rides_by_driver_id": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
-			return loadOneToMany("select * from Ride where driver_id in (%s)", "driver_id", keys)
+		"deep_rides_by_customer_id": dataloader.NewBatchedLoader(func(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
+			return loadOneToMany("select * from Ride join Driver using (driver_id) where customer_id in (%s)", "customer_id", keys)
 		}),
 	}
 }
@@ -318,6 +355,7 @@ func main() {
 	})
 
 	customerType.AddFieldConfig("rides", &graphql.Field{Type: graphql.NewList(rideType)})
+	customerType.AddFieldConfig("deep_rides", &graphql.Field{Type: graphql.NewList(rideType)})
 	driverType.AddFieldConfig("rides", &graphql.Field{Type: graphql.NewList(rideType)})
 
 	queryType := graphql.NewObject(graphql.ObjectConfig{
@@ -442,6 +480,8 @@ func main() {
 	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_customer(id: 200) {rides{ driver{rides{ driver{rides{ driver{name} }} }} }} }'")
 	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_rides(ids:[1 2]){id destination} }'")
 	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'mutation { add_ride(params:{customer_id:100 driver_id:1 destination:\"One\"}){id, customer{name}} }'")
+	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_customer(id: 200) {deep_rides{ driver{name} }} }'")
+	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_customer(id: 200) {rides{ driver{name} }} }'")
 	fmt.Println()
 	http.ListenAndServe(":8080", nil)
 }
