@@ -3,8 +3,11 @@
 - [Golang](http://golang.org)
 - [GraphQL](http://github.com/graphql-go/graphql)
 - [DataLoader](http://github.com/graph-gophers/dataloader)
-- [HTTP](github.com/graphql-go/handler)
+- [HTTP](http://github.com/graphql-go/handler)
 
+```sh
+./database_init.sh # by the way, you can easily view db using ./database_show.sh
+```
 ```sh
 go run main.go
 ```
@@ -57,9 +60,8 @@ curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 
 ```
 DB requsests are batched:
 ```sql
-select * from Customer where customer_id=200;
 select * from Ride where customer_id in (200);
-select * from Driver where driver_id in (1, 2);
+select * from Customer where customer_id in (200)
 select * from Ride where driver_id in (1, 2);
 select * from Customer where customer_id in (100, 200);
 ```
