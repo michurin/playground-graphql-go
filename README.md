@@ -5,16 +5,37 @@
 - [DataLoader](http://github.com/graph-gophers/dataloader)
 - [HTTP](http://github.com/graphql-go/handler)
 
+#### Install
+
 ```sh
-./database_init.sh # by the way, you can easily view db using ./database_show.sh
+go get github.com/michurin/playground-graphql-go
 ```
+
+#### Setup
+
 ```sh
-go run main.go
+$GOPATH/src/github.com/michurin/playground-graphql-go/database_init.sh
 ```
+
+By the way, you can easily view db using `database_show.sh`.
+
+#### Run
+
+```sh
+$GOPATH/bin/playground-graphql-go
+```
+or
+```sh
+go run $GOPATH/src/github.com/michurin/playground-graphql-go/main.go
+```
+
+#### Enjoy
+
 ```sh
 Q='query {x_customer(id: 200) {name rides {destination driver {rides {destination customer{name}}}}}}'
 curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d "$Q"
 ```
+
 ```javascript
 {
     "data": {
@@ -58,29 +79,44 @@ curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 
     }
 }
 ```
-DB requsests are batched:
-```sql
-select * from Ride where customer_id in (200);
-select * from Customer where customer_id in (200)
-select * from Ride where driver_id in (1, 2);
-select * from Customer where customer_id in (100, 200);
+
+#### GraphQL schema
+
 ```
-DB content:
-```sh
-sqlite3 database.db .dump
+type Query {
+    x_ride(id:Int!): Ride
+    x_rides(ids:[Int]!): [Ride]
+    x_customer(id:Int!): Customer
+}
+type Ride {
+    id: Int!
+    destination: String!
+    driver: Driver!
+    customer: Customer!
+}
+type Driver {
+    id: Int!
+    name: String!
+    rides: [Ride]!
+}
+type Customer {
+    id: Int!
+    name: String!
+    rides: [Ride]!
+    deep_rides: [Ride]!
+}
 ```
-```sql
-PRAGMA foreign_keys=OFF;
-BEGIN TRANSACTION;
-CREATE TABLE Ride (ride_id int, driver_id int, customer_id int, destination string);
-INSERT INTO Ride VALUES(1,1,100,'Adderss_for_ride_1');
-INSERT INTO Ride VALUES(2,1,200,'Address_for_ride_2');
-INSERT INTO Ride VALUES(3,2,200,'Address_for_ride_3');
-CREATE TABLE Driver (driver_id int, name string);
-INSERT INTO Driver VALUES(1,'Driver_1');
-INSERT INTO Driver VALUES(2,'Driver_2');
-CREATE TABLE Customer (customer_id int, name string);
-INSERT INTO Customer VALUES(100,'Customer_100');
-INSERT INTO Customer VALUES(200,'Customer_200');
-COMMIT;
+
+#### Database schema
+
 ```
+                Ride
+Driver          +-------------+
++-----------+   | ride_id     |   Customer
+| driver_id |--<| driver_id   |   +-------------+
+| name      |   | customer_id |>--| customer_id |
++-----------+   | destination |   | name        |
+                +-------------+   +-------------+
+```
+
+More details in `database_init.sh` script.
