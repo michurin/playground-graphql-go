@@ -82,7 +82,7 @@ curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 
 
 #### GraphQL schema
 
-```
+```graphql
 type Query {
     x_ride(id:Int!): Ride
     x_rides(ids:[Int]!): [Ride]
