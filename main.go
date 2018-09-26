@@ -380,7 +380,7 @@ func main() {
 				Name: "ride",
 				Type: rideType,
 				Args: graphql.FieldConfigArgument{
-					"id": &graphql.ArgumentConfig{Type: graphql.Int},
+					"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.Int)},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					rideId := p.Args["id"].(int)
@@ -391,7 +391,7 @@ func main() {
 				Name: "rides",
 				Type: graphql.NewList(rideType),
 				Args: graphql.FieldConfigArgument{
-					"ids": &graphql.ArgumentConfig{Type: graphql.NewList(graphql.Int)},
+					"ids": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(graphql.Int)))},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					rideIds := p.Args["ids"].([]interface{})
@@ -405,7 +405,7 @@ func main() {
 			"x_customer": &graphql.Field{
 				Type: customerType,
 				Args: graphql.FieldConfigArgument{
-					"id": &graphql.ArgumentConfig{Type: graphql.Int},
+					"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.Int)},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					customerId := p.Args["id"].(int)
@@ -415,8 +415,8 @@ func main() {
 		},
 	})
 
-	mutationParamsType := graphql.NewNonNull(graphql.NewInputObject(graphql.InputObjectConfig{
-		Name: "complex", // MUST?
+	rideInputType := graphql.NewInputObject(graphql.InputObjectConfig{
+		Name: "rideInput",
 		Fields: graphql.InputObjectConfigFieldMap{
 			"customer_id": &graphql.InputObjectFieldConfig{
 				Type: graphql.NewNonNull(graphql.Int),
@@ -428,7 +428,7 @@ func main() {
 				Type: graphql.NewNonNull(graphql.String),
 			},
 		},
-	}))
+	})
 
 	mutationType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "Mutation",
@@ -437,7 +437,7 @@ func main() {
 				Name: "add_ride",
 				Type: rideType,
 				Args: graphql.FieldConfigArgument{
-					"params": &graphql.ArgumentConfig{Type: mutationParamsType},
+					"params": &graphql.ArgumentConfig{Type: graphql.NewNonNull(rideInputType)},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					params := p.Args["params"].(map[string]interface{})
@@ -473,30 +473,33 @@ func main() {
 	var schema, err = graphql.NewSchema(graphql.SchemaConfig{
 		Query:    queryType,
 		Mutation: mutationType,
-		// Types: []graphql.Type{customerType}, // ??
 	})
 	if err != nil {
 		panic(err)
 	}
 
-	//fmt.Printf("%#v\n", schema.TypeMap())
-
 	handler := handlerWrapper(handler.New(&handler.Config{
-		Schema: &schema,
-		Pretty: true,
+		Schema:     &schema,
+		Pretty:     true,
+		GraphiQL:   true,
+		Playground: true,
 	}))
 	http.Handle("/gql", handler)
 
-	fmt.Println("Examples:")
-	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_ride(id:2) {id destination customer {id name} driver {id name}} }'")
-	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_customer(id: 200) {id name, rides {id, destination, driver {name}}} }'")
-	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_ride(id: 3) {id destination customer {id name rides {id driver {name}}}} }'")
-	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_ride(id: 3) {id destination customer {id name rides {id driver {name rides {id}}}}} }")
-	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_customer(id: 200) {rides{ driver{rides{ driver{rides{ driver{name} }} }} }} }'")
-	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_rides(ids:[1 2]){id destination} }'")
-	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'mutation { add_ride(params:{customer_id:100 driver_id:1 destination:\"One\"}){id, customer{name}} }'")
-	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_customer(id: 200) {deep_rides{ driver{name} }} }'")
-	fmt.Println("curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 'query { x_customer(id: 200) {rides{ driver{name} }} }'")
-	fmt.Println()
+	fmt.Println(`
+Examples:
+  query { x_ride(id:2) {id destination customer {id name} driver {id name}} }
+  query { x_customer(id: 200) {id name, rides {id, destination, driver {name}}} }
+  query { x_ride(id: 3) {id destination customer {id name rides {id driver {name}}}} }
+  query { x_ride(id: 3) {id destination customer {id name rides {id driver {name rides {id}}}}} }
+  query { x_customer(id: 200) {rides{ driver{rides{ driver{rides{ driver{name} }} }} }} }
+  query { x_rides(ids:[1 2]){id destination} }
+  mutation { add_ride(params:{customer_id:100 driver_id:1 destination:"One"}){id, customer{name}} }
+  query { x_customer(id: 200) {deep_rides{ driver{name} }} }
+  query { x_customer(id: 200) {rides{ driver{name} }} }
+Curl:
+  curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d "$QUERY"
+GraphiQL (in browser):
+  http://localhost:8080/gql`)
 	http.ListenAndServe(":8080", nil)
 }
