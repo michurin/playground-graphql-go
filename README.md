@@ -83,27 +83,45 @@ curl -XPOST http://localhost:8080/gql -H 'Content-Type: application/graphql' -d 
 #### GraphQL schema
 
 ```graphql
-type Query {
-    x_ride(id:Int!): Ride
-    x_rides(ids:[Int]!): [Ride]
-    x_customer(id:Int!): Customer
+schema {
+  query: RootQuery
+  mutation: Mutation
 }
-type Ride {
-    id: Int!
-    destination: String!
-    driver: Driver!
-    customer: Customer!
+
+type customer {
+  deep_rides: [ride]
+  id: Int
+  name: String
+  rides: [ride]
 }
-type Driver {
-    id: Int!
-    name: String!
-    rides: [Ride]!
+
+type driver {
+  id: Int
+  name: String
+  rides: [ride]
 }
-type Customer {
-    id: Int!
-    name: String!
-    rides: [Ride]!
-    deep_rides: [Ride]!
+
+type Mutation {
+  add_ride(params: rideInput!): ride
+}
+
+type ride {
+  customer: customer
+  destination: String
+  driver: driver
+  id: Int
+}
+
+input rideInput {
+  driver_id: Int!
+  destination: String!
+  customer_id: Int!
+}
+
+type RootQuery {
+  x_customer(id: Int!): customer
+  x_ride(id: Int!): ride
+  x_rides(ids: [Int!]!): [ride]
 }
 ```
 
@@ -120,3 +138,7 @@ Driver          +-------------+
 ```
 
 More details in `database_init.sh` script.
+
+#### Related tools
+
+- [graphql-cli](https://github.com/graphql-cli/graphql-cli)
