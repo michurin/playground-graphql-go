@@ -69,8 +69,20 @@ type gtHandler struct {
 }
 
 func (h *gtHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// you can set you own header for tracing etc
 	w.Header().Add("X-Michurin", "Here!")
-	h.origHandler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), "dataloaders", NewLoaders())))
+	// hacks for graphql-cli
+	if origin := r.Header.Get("Origin"); origin != "" {
+		w.Header().Add("Access-Control-Allow-Origin", origin)
+	}
+	w.Header().Add("Access-Control-Allow-Headers", "Content-Type,X-Apollo-Tracing")
+	if r.Method == http.MethodOptions {
+		// just call for schema
+		h.origHandler.ServeHTTP(w, r)
+	} else {
+		// fill request context
+		h.origHandler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), "dataloaders", NewLoaders())))
+	}
 }
 
 func handlerWrapper(h http.Handler) *gtHandler {
@@ -166,7 +178,7 @@ func NewDriverWithName(id int, name string) *Driver {
 func (d *Driver) Resolve(p graphql.ResolveParams) (interface{}, error) {
 	switch p.Info.FieldName {
 	case "id":
-		return d.id, nil
+		return d.id, nil // in fact, it is too lazy, we did not check is this id exists in db
 	case "name":
 		if d.name != nil {
 			return d.name, nil
@@ -344,37 +356,37 @@ func NewLoaders() map[string](*dataloader.Loader) {
 
 func main() {
 	var driverType = graphql.NewObject(graphql.ObjectConfig{
-		Name: "driver", // used by graphlql-relay
+		Name: "Driver", // used by graphlql-relay
 		Fields: graphql.Fields{
-			"id":   &graphql.Field{Type: graphql.Int},
-			"name": &graphql.Field{Type: graphql.String},
+			"id":   &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"name": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 		},
 	})
 
 	var customerType = graphql.NewObject(graphql.ObjectConfig{
-		Name: "customer",
+		Name: "Customer",
 		Fields: graphql.Fields{
-			"id":   &graphql.Field{Type: graphql.Int},
-			"name": &graphql.Field{Type: graphql.String},
+			"id":   &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"name": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 		},
 	})
 
 	var rideType = graphql.NewObject(graphql.ObjectConfig{
-		Name: "ride",
+		Name: "Ride",
 		Fields: graphql.Fields{
-			"id":          &graphql.Field{Type: graphql.Int},
-			"driver":      &graphql.Field{Type: driverType},
-			"customer":    &graphql.Field{Type: customerType},
-			"destination": &graphql.Field{Type: graphql.String},
+			"id":          &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"driver":      &graphql.Field{Type: graphql.NewNonNull(driverType)},
+			"customer":    &graphql.Field{Type: graphql.NewNonNull(customerType)},
+			"destination": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 		},
 	})
 
-	customerType.AddFieldConfig("rides", &graphql.Field{Type: graphql.NewList(rideType)})
-	customerType.AddFieldConfig("deep_rides", &graphql.Field{Type: graphql.NewList(rideType)})
-	driverType.AddFieldConfig("rides", &graphql.Field{Type: graphql.NewList(rideType)})
+	customerType.AddFieldConfig("rides", &graphql.Field{Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(rideType)))})
+	customerType.AddFieldConfig("deep_rides", &graphql.Field{Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(rideType)))})
+	driverType.AddFieldConfig("rides", &graphql.Field{Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(rideType)))})
 
 	queryType := graphql.NewObject(graphql.ObjectConfig{
-		Name: "RootQuery",
+		Name: "Query",
 		Fields: graphql.Fields{
 			"x_ride": &graphql.Field{
 				Name: "ride",
@@ -384,7 +396,7 @@ func main() {
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					rideId := p.Args["id"].(int)
-					return NewRide(rideId), nil
+					return NewRide(rideId), nil // in fact, we have to check is rideId exists in db
 				},
 			},
 			"x_rides": &graphql.Field{
@@ -416,7 +428,7 @@ func main() {
 	})
 
 	rideInputType := graphql.NewInputObject(graphql.InputObjectConfig{
-		Name: "rideInput",
+		Name: "RideInput",
 		Fields: graphql.InputObjectConfigFieldMap{
 			"customer_id": &graphql.InputObjectFieldConfig{
 				Type: graphql.NewNonNull(graphql.Int),
