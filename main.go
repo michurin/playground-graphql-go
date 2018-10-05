@@ -12,7 +12,7 @@ import (
 
 	"github.com/graph-gophers/dataloader"
 	"github.com/graphql-go/graphql"
-	"github.com/graphql-go/handler"
+	"github.com/michurin/handler"
 	"github.com/mxk/go-sqlite/sqlite3"
 )
 
@@ -62,34 +62,19 @@ func sql(sql string) []sqlite3.RowMap {
 	return result
 }
 
-// ----- http -----
+// ----- util -----
 
-type gtHandler struct {
-	origHandler http.Handler
-}
-
-func (h *gtHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// you can set you own header for tracing etc
-	w.Header().Add("X-Michurin", "Here!")
-	// hacks for graphql-cli
+func requestCallbackFn(ctx context.Context, w http.ResponseWriter, r *http.Request) context.Context {
+	w.Header().Add("X-Michurin", "Ok")
 	if origin := r.Header.Get("Origin"); origin != "" {
 		w.Header().Add("Access-Control-Allow-Origin", origin)
 	}
 	w.Header().Add("Access-Control-Allow-Headers", "Content-Type,X-Apollo-Tracing")
-	if r.Method == http.MethodOptions {
-		// just call for schema
-		h.origHandler.ServeHTTP(w, r)
-	} else {
-		// fill request context
-		h.origHandler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), "dataloaders", NewLoaders())))
+	if r.Method != http.MethodOptions {
+		ctx = context.WithValue(ctx, "dataloaders", NewLoaders())
 	}
+	return ctx
 }
-
-func handlerWrapper(h http.Handler) *gtHandler {
-	return &gtHandler{h}
-}
-
-// ----- util -----
 
 func getLoaderFnByName(p graphql.ResolveParams, name string, key dataloader.Key) dataloader.Thunk {
 	return p.Context.Value("dataloaders").(map[string]*dataloader.Loader)[name].Load(p.Context, key)
@@ -490,12 +475,13 @@ func main() {
 		panic(err)
 	}
 
-	handler := handlerWrapper(handler.New(&handler.Config{
-		Schema:     &schema,
-		Pretty:     true,
-		GraphiQL:   true,
-		Playground: true,
-	}))
+	handler := handler.New(&handler.Config{
+		Schema:            &schema,
+		Pretty:            true,
+		GraphiQL:          true,
+		Playground:        true,
+		RequestCallbackFn: requestCallbackFn,
+	})
 	http.Handle("/gql", handler)
 
 	fmt.Println(`
